@@ -1,0 +1,54 @@
+Dependency metrics,sexta, 7 nov. 2025 22:58:13 WET
+Class,Cyclic,Dcy,Dcy*,Dpt,Dpt*,PDcy,PDpt
+mindustry.ai.Astar,909,7,1 148,6,1 056,4,4
+mindustry.ai.BaseBuilderAI,909,31,1 148,2,1 056,11,2
+mindustry.ai.BaseRegistry,909,18,1 148,5,1 056,12,4
+mindustry.ai.BaseRegistry.BasePart,909,3,1 148,4,1 056,3,3
+mindustry.ai.BlockIndexer,909,26,1 148,33,1 056,13,21
+mindustry.ai.BlockIndexer.TurretQuadtree,0,1,1,1,1 057,1,1
+mindustry.ai.ControlPathfinder,909,21,1 148,6,1 056,9,4
+mindustry.ai.ControlPathfinder.Cluster,0,0,0,1,1 057,0,1
+mindustry.ai.ControlPathfinder.FieldCache,909,3,1 148,2,1 056,3,1
+mindustry.ai.ControlPathfinder.FieldIndexStruct,0,0,0,0,0,0,0
+mindustry.ai.ControlPathfinder.IntraEdgeStruct,0,0,0,0,0,0,0
+mindustry.ai.ControlPathfinder.NodeIndexStruct,0,0,0,0,0,0,0
+mindustry.ai.ControlPathfinder.PathRequest,909,5,1 148,1,1 056,4,1
+mindustry.ai.ItemUnitStance,909,4,1 148,4,1 056,3,3
+mindustry.ai.PathfindQueue,0,1,1,2,1 057,0,1
+mindustry.ai.Pathfinder,909,23,1 148,16,1 056,9,10
+mindustry.ai.Pathfinder.EnemyCoreField,909,10,1 148,1,1 056,6,1
+mindustry.ai.Pathfinder.Flowfield,909,5,1 148,5,1 056,4,2
+mindustry.ai.Pathfinder.PathTileStruct,0,0,0,0,0,0,0
+mindustry.ai.Pathfinder.PositionTarget,0,3,1 149,0,0,3,0
+mindustry.ai.RtsAI,909,22,1 148,2,1 056,14,2
+mindustry.ai.UnitCommand,909,8,1 148,16,1 056,4,12
+mindustry.ai.UnitGroup,909,8,1 148,2,1 056,6,2
+mindustry.ai.UnitStance,909,8,1 148,10,1 056,6,9
+mindustry.ai.WaveSpawner,909,24,1 148,18,1 056,10,13
+mindustry.ai.types.AssemblerAI,909,1,1 148,4,1 056,1,4
+mindustry.ai.types.BoostAI,909,3,1 148,2,1 056,3,2
+mindustry.ai.types.BuilderAI,909,15,1 148,3,1 056,8,3
+mindustry.ai.types.CargoAI,909,7,1 148,2,1 056,7,2
+mindustry.ai.types.CommandAI,909,19,1 148,15,1 056,11,10
+mindustry.ai.types.DefenderAI,909,7,1 148,2,1 056,5,2
+mindustry.ai.types.FlyingAI,909,9,1 148,5,1 056,6,3
+mindustry.ai.types.FlyingFollowAI,909,8,1 148,2,1 056,6,2
+mindustry.ai.types.GroundAI,909,7,1 148,5,1 056,7,4
+mindustry.ai.types.HugAI,909,8,1 148,2,1 056,7,2
+mindustry.ai.types.LogicAI,909,9,1 148,10,1 056,7,8
+mindustry.ai.types.MinerAI,909,9,1 148,2,1 056,7,2
+mindustry.ai.types.MissileAI,909,4,1 148,4,1 056,4,4
+mindustry.ai.types.PrebuildAI,909,15,1 148,2,1 056,9,2
+mindustry.ai.types.RepairAI,909,3,1 148,2,1 056,3,2
+mindustry.ai.types.SuicideAI,909,13,1 148,2,1 056,12,2
+
+Interface,Cyclic,Dcy,Dcy*,Dpt,Dpt*,PDcy,PDpt
+mindustry.ai.Astar.DistanceHeuristic,0,0,0,2,1 057,0,2
+mindustry.ai.Astar.TileHeuristic,909,1,1 148,6,1 056,1,4
+mindustry.ai.Pathfinder.PathCost,0,0,0,7,1 057,0,3
+mindustry.ai.WaveSpawner.SpawnConsumer,0,0,0,1,1 057,0,1
+
+Package,Cyclic,PDcy,PDpt,PDpt*
+mindustry.ai,58,23,29,60
+mindustry.ai.types,58,18,15,60
+

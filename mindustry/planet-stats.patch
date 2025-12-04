@@ -1,0 +1,615 @@
+diff --git a/core/assets/bundles/bundle.properties b/core/assets/bundles/bundle.properties
+index aed6127..1e41238 100644
+--- a/core/assets/bundles/bundle.properties
++++ b/core/assets/bundles/bundle.properties
+@@ -86,6 +86,9 @@ schematic.tagexists = That tag already exists.
+ stats = Stats
+ stats.wave = Waves Defeated
+ stats.unitsCreated = Units Created
++stats.playerDeaths = Player Deaths
++stats.distanceWalked = Distance Walked
++planet.stats = Planet Statistics
+ stats.enemiesDestroyed = Enemies Destroyed
+ stats.built = Buildings Built
+ stats.destroyed = Buildings Destroyed
+diff --git a/core/src/mindustry/core/Control.java b/core/src/mindustry/core/Control.java
+index 3a26a8d..0c17b41 100644
+--- a/core/src/mindustry/core/Control.java
++++ b/core/src/mindustry/core/Control.java
+@@ -136,6 +136,12 @@ public class Control implements ApplicationListener, Loadable{
+ 
+         Events.on(GameOverEvent.class, event -> {
+             state.stats.wavesLasted = state.wave;
++            // Update planet stats
++            if(state.rules.planet != null){
++                PlanetStats planetStats = state.rules.planet.getStats();
++                planetStats.wavesLasted = Math.max(planetStats.wavesLasted, state.wave);
++                state.rules.planet.saveStats();
++            }
+             Effect.shake(5, 6, Core.camera.position.x, Core.camera.position.y);
+             //the restart dialog can show info for any number of scenarios
+             Call.gameOver(event.winner);
+@@ -567,6 +573,17 @@ public class Control implements ApplicationListener, Loadable{
+             }
+         }
+ 
++        // Save planet stats when exiting if we're in a game
++        if(!net.client() && !state.isMenu() && state.rules != null && state.rules.planet != null){
++            try{
++                state.rules.planet.saveStats();
++                settings.forceSave();
++                Log.info("Saved planet stats on exit.");
++            }catch(Throwable t){
++                Log.err(t);
++            }
++        }
++
+         for(Music music : assets.getAll(Music.class, new Seq<>())){
+             music.stop();
+         }
+diff --git a/core/src/mindustry/core/Logic.java b/core/src/mindustry/core/Logic.java
+index ed955e4..2d77b8f 100644
+--- a/core/src/mindustry/core/Logic.java
++++ b/core/src/mindustry/core/Logic.java
+@@ -34,6 +34,10 @@ import static mindustry.Vars.*;
+  * This class should <i>not</i> call any outside methods to change state of modules, but instead fire events.
+  */
+ public class Logic implements ApplicationListener{
++    /** Last player position for distance tracking. */
++    private float lastPlayerX, lastPlayerY;
++    /** Whether we've initialized the last position. */
++    private boolean lastPosInitialized = false;
+ 
+     public Logic(){
+ 
+@@ -190,8 +194,23 @@ public class Logic implements ApplicationListener{
+             if(e.team == state.rules.defaultTeam){
+                 if(e.breaking){
+                     state.stats.buildingsDeconstructed++;
++                    // Update planet stats
++                    if(state.rules.planet != null){
++                        PlanetStats planetStats = state.rules.planet.getStats();
++                        planetStats.buildingsDeconstructed++;
++                        state.rules.planet.saveStats();
++                    }
+                 }else{
+                     state.stats.buildingsBuilt++;
++                    // Update planet stats
++                    if(state.rules.planet != null){
++                        PlanetStats planetStats = state.rules.planet.getStats();
++                        planetStats.buildingsBuilt++;
++                        if(e.tile.block() != null){
++                            planetStats.placedBlockCount.increment(e.tile.block(), 0, 1);
++                        }
++                        state.rules.planet.saveStats();
++                    }
+                 }
+             }
+         });
+@@ -199,18 +218,43 @@ public class Logic implements ApplicationListener{
+         Events.on(BlockDestroyEvent.class, e -> {
+             if(e.tile.team() == state.rules.defaultTeam){
+                 state.stats.buildingsDestroyed ++;
++                // Update planet stats
++                if(state.rules.planet != null){
++                    PlanetStats planetStats = state.rules.planet.getStats();
++                    planetStats.buildingsDestroyed++;
++                    state.rules.planet.saveStats();
++                }
+             }
+         });
+ 
+         Events.on(UnitDestroyEvent.class, e -> {
+             if(e.unit.team() != state.rules.defaultTeam){
+                 state.stats.enemyUnitsDestroyed ++;
++                // Update planet stats
++                if(state.rules.planet != null){
++                    PlanetStats planetStats = state.rules.planet.getStats();
++                    planetStats.enemyUnitsDestroyed++;
++                    state.rules.planet.saveStats();
++                }
++            }else if(e.unit.isPlayer()){
++                // Track player deaths
++                if(state.rules.planet != null){
++                    PlanetStats planetStats = state.rules.planet.getStats();
++                    planetStats.playerDeaths++;
++                    state.rules.planet.saveStats();
++                }
+             }
+         });
+ 
+         Events.on(UnitCreateEvent.class, e -> {
+             if(e.unit.team == state.rules.defaultTeam){
+                 state.stats.unitsCreated++;
++                // Update planet stats
++                if(state.rules.planet != null){
++                    PlanetStats planetStats = state.rules.planet.getStats();
++                    planetStats.unitsCreated++;
++                    state.rules.planet.saveStats();
++                }
+             }
+         });
+     }
+@@ -259,6 +303,8 @@ public class Logic implements ApplicationListener{
+     }
+ 
+     public void reset(){
++        // Reset position tracking for distance calculation
++        lastPosInitialized = false;
+         State prev = state.getState();
+         state.patcher.unapply();
+         //recreate gamestate - sets state to menu
+@@ -396,6 +442,12 @@ public class Logic implements ApplicationListener{
+     @Remote(called = Loc.both)
+     public static void gameOver(Team winner){
+         state.stats.wavesLasted = state.wave;
++        // Update planet stats
++        if(state.rules.planet != null){
++            PlanetStats planetStats = state.rules.planet.getStats();
++            planetStats.wavesLasted = Math.max(planetStats.wavesLasted, state.wave);
++            state.rules.planet.saveStats();
++        }
+         state.won = player.team() == winner;
+         Time.run(60f * 3f, () -> ui.restart.show(winner));
+         netClient.setQuiet();
+@@ -464,6 +516,9 @@ public class Logic implements ApplicationListener{
+                     universe.update();
+                 }
+                 Time.update();
++                
++                // Update planet statistics (after delta is calculated)
++                updatePlanetStats(delta);
+ 
+                 logicVars.update();
+ 
+@@ -542,6 +597,48 @@ public class Logic implements ApplicationListener{
+         }
+     }
+ 
++    /** Updates planet statistics for time played and distance walked. */
++    private void updatePlanetStats(float delta){
++        if(state.rules.planet == null || !state.isGame() || state.isPaused() || net.client()) return;
++        
++        PlanetStats stats = state.rules.planet.getStats();
++        
++        // Track time played (delta is in seconds, convert to milliseconds)
++        long deltaTime = (long)(delta * 1000f);
++        stats.timePlayed += deltaTime;
++        
++        // Track distance walked by player units
++        if(player != null && player.unit() != null && player.unit().isValid()){
++            Unit unit = player.unit();
++            float x = unit.x;
++            float y = unit.y;
++            
++            if(lastPosInitialized){
++                // Calculate distance moved
++                float dx = x - lastPlayerX;
++                float dy = y - lastPlayerY;
++                float distance = (float)Math.sqrt(dx * dx + dy * dy);
++                
++                // Only count significant movement (filter out tiny jitter)
++                if(distance > 0.1f){
++                    stats.distanceWalked += distance;
++                }
++            }
++            
++            lastPlayerX = x;
++            lastPlayerY = y;
++            lastPosInitialized = true;
++        }else{
++            // Reset tracking if player unit is invalid
++            lastPosInitialized = false;
++        }
++        
++        // Save stats periodically (every 2 seconds to avoid too frequent saves but ensure data persistence)
++        if(state.tick % 120 == 0){
++            state.rules.planet.saveStats();
++        }
++    }
++
+     /** @return whether the wave timer is paused due to enemies */
+     public boolean isWaitingWave(){
+         return (state.rules.waitEnemies || (state.wave >= state.rules.winWave && state.rules.winWave > 0)) && state.enemies > 0;
+diff --git a/core/src/mindustry/game/PlanetStats.java b/core/src/mindustry/game/PlanetStats.java
+new file mode 100644
+index 0000000..2f5dec8
+--- /dev/null
++++ b/core/src/mindustry/game/PlanetStats.java
+@@ -0,0 +1,67 @@
++package mindustry.game;
++
++import arc.struct.*;
++import mindustry.type.*;
++import mindustry.world.*;
++
++/**
++ * Statistics tracked per planet.
++ * Tracks player activity on individual planets including deaths, builds, and other metrics.
++ */
++public class PlanetStats{
++    /** Player unit deaths on this planet. */
++    public int playerDeaths;
++    /** Enemy (red team) units destroyed on this planet. */
++    public int enemyUnitsDestroyed;
++    /** Total waves lasted on this planet. */
++    public int wavesLasted;
++    /** Friendly buildings fully built on this planet. */
++    public int buildingsBuilt;
++    /** Friendly buildings fully deconstructed on this planet. */
++    public int buildingsDeconstructed;
++    /** Friendly buildings destroyed on this planet. */
++    public int buildingsDestroyed;
++    /** Total units created by any means on this planet. */
++    public int unitsCreated;
++    /** Record of blocks that have been placed by count on this planet. */
++    public ObjectIntMap<Block> placedBlockCount = new ObjectIntMap<>();
++    /** Total time played on this planet in milliseconds. */
++    public long timePlayed;
++    /** Total distance walked by player units on this planet. */
++    public float distanceWalked;
++    
++    /** Resets all statistics to zero. */
++    public void reset(){
++        playerDeaths = 0;
++        enemyUnitsDestroyed = 0;
++        wavesLasted = 0;
++        buildingsBuilt = 0;
++        buildingsDeconstructed = 0;
++        buildingsDestroyed = 0;
++        unitsCreated = 0;
++        placedBlockCount.clear();
++        timePlayed = 0;
++        distanceWalked = 0;
++    }
++    
++    /** Adds stats from another PlanetStats object to this one. */
++    public void add(PlanetStats other){
++        if(other == null) return;
++        
++        playerDeaths += other.playerDeaths;
++        enemyUnitsDestroyed += other.enemyUnitsDestroyed;
++        wavesLasted += other.wavesLasted;
++        buildingsBuilt += other.buildingsBuilt;
++        buildingsDeconstructed += other.buildingsDeconstructed;
++        buildingsDestroyed += other.buildingsDestroyed;
++        unitsCreated += other.unitsCreated;
++        timePlayed += other.timePlayed;
++        distanceWalked += other.distanceWalked;
++        
++        for(Block block : other.placedBlockCount.keys()){
++            int count = other.placedBlockCount.get(block, 0);
++            placedBlockCount.increment(block, 0, count);
++        }
++    }
++}
++
+diff --git a/core/src/mindustry/type/Planet.java b/core/src/mindustry/type/Planet.java
+index 0a31434..f55111b 100644
+--- a/core/src/mindustry/type/Planet.java
++++ b/core/src/mindustry/type/Planet.java
+@@ -177,6 +177,8 @@ public class Planet extends UnlockableContent{
+     public boolean loadPlanetData = false;
+     /** Data indicating attack sector positions and sector mappings. */
+     public @Nullable PlanetData data;
++    /** Statistics tracked for this planet. */
++    public @Nullable PlanetStats stats;
+ 
+     public Planet(String name, Planet parent, float radius){
+         super(name);
+@@ -227,6 +229,31 @@ public class Planet extends UnlockableContent{
+     public void loadRules(){
+         campaignRules = Core.settings.getJson(name + "-campaign-rules", CampaignRules.class, () -> campaignRules);
+     }
++    
++    /** Saves planet statistics to persistent storage. */
++    public void saveStats(){
++        if(stats == null) stats = new PlanetStats();
++        Core.settings.putJson(name + "-stats", stats);
++    }
++    
++    /** Loads planet statistics from persistent storage. */
++    public void loadStats(){
++        stats = Core.settings.getJson(name + "-stats", PlanetStats.class, () -> {
++            PlanetStats newStats = new PlanetStats();
++            return newStats;
++        });
++    }
++    
++    /** Gets planet statistics, creating if necessary. */
++    public PlanetStats getStats(){
++        if(stats == null){
++            loadStats();
++            if(stats == null){
++                stats = new PlanetStats();
++            }
++        }
++        return stats;
++    }
+ 
+     public @Nullable Sector getStartSector(){
+         return sectors.size == 0 ? null : sectors.get(startSector);
+@@ -392,6 +419,7 @@ public class Planet extends UnlockableContent{
+     public void init(){
+         applyDefaultRules(campaignRules);
+         loadRules();
++        loadStats();
+ 
+         if(techTree == null){
+             techTree = TechTree.roots.find(n -> n.planet == this);
+diff --git a/core/src/mindustry/ui/dialogs/PlanetDialog.java b/core/src/mindustry/ui/dialogs/PlanetDialog.java
+index ce6798e..3a9f3aa 100644
+--- a/core/src/mindustry/ui/dialogs/PlanetDialog.java
++++ b/core/src/mindustry/ui/dialogs/PlanetDialog.java
+@@ -74,6 +74,7 @@ public class PlanetDialog extends BaseDialog implements PlanetInterfaceRenderer{
+     private Element mainView;
+     private CampaignRulesDialog campaignRules = new CampaignRulesDialog();
+     private SectorSelectDialog selectDialog = new SectorSelectDialog();
++    private PlanetStatsDialog planetStatsDialog = new PlanetStatsDialog();
+ 
+     public PlanetDialog(){
+         super("", Styles.fullDialog);
+@@ -101,6 +102,11 @@ public class PlanetDialog extends BaseDialog implements PlanetInterfaceRenderer{
+                     }
+                     return true;
+                 }
++                // Toggle planet stats with 'S' key (only if stats dialog is not open)
++                if(event.targetActor == PlanetDialog.this && key == KeyCode.s && mode != planetLaunch && planetStatsDialog.getScene() == null){
++                    planetStatsDialog.show(state.planet);
++                    return true;
++                }
+                 return false;
+             }
+         });
+@@ -710,6 +716,47 @@ public class PlanetDialog extends BaseDialog implements PlanetInterfaceRenderer{
+                 ""
+             ).style(Styles.outlineLabel).color(Pal.accent);
+         }),
++        //campaign progress display
++        new Table(t -> {
++            t.touchable = Touchable.disabled;
++            t.setFillParent(true);
++            t.top();
++            t.defaults().center();
++            t.visible(() -> mode == look && state.planet != null && state.planet.hasGrid());
++            t.update(() -> {
++                t.clearChildren();
++                if(mode == look && state.planet != null && state.planet.hasGrid()){
++                    // Count total campaign sectors:
++                    // - Sectors with presets (campaign sectors)
++                    // - Sectors that have bases (captured)
++                    // - Sectors that have enemy bases (can be captured)
++                    int totalSectors = state.planet.sectors.count(s -> 
++                        (s.preset != null && s.preset.requireUnlock) || 
++                        s.hasBase() || 
++                        s.hasEnemyBase()
++                    );
++                    
++                    // Count captured sectors (sectors that are captured)
++                    int capturedSectors = state.planet.sectors.count(Sector::isCaptured);
++                    
++                    // Only show if there are sectors to track
++                    if(totalSectors > 0){
++                        float percentage = (capturedSectors * 100f) / totalSectors;
++                        float fraction = capturedSectors / (float)totalSectors;
++                        
++                        Table content = new Table();
++                        content.background(Styles.black6);
++                        content.margin(8f);
++                        
++                        content.add("[accent]" + capturedSectors + "[white]/[lightgray]" + totalSectors + " [white]sectors captured").style(Styles.outlineLabel).row();
++                        content.add(new Bar("", Pal.accent, () -> fraction)).width(200f).height(8f).padTop(4f).row();
++                        content.add("[lightgray]" + (int)percentage + "% complete").style(Styles.outlineLabel).fontScale(0.85f).padTop(2f);
++                        
++                        t.add(content).padTop(20f);
++                    }
++                }
++            });
++        }),
+         buttons,
+ 
+         // planet selection
+@@ -720,6 +767,13 @@ public class PlanetDialog extends BaseDialog implements PlanetInterfaceRenderer{
+             t.button("@campaign.difficulty", Icon.bookSmall, () -> {
+                 campaignRules.show(state.planet);
+             }).margin(12f).size(208f, 40f).padTop(12f).visible(() -> state.planet.allowCampaignRules && mode != planetLaunch).row();
++            t.button("@planet.stats", Icon.info, () -> {
++                if(planetStatsDialog.getScene() != null){
++                    planetStatsDialog.hide();
++                }else{
++                    planetStatsDialog.show(state.planet);
++                }
++            }).margin(12f).size(208f, 40f).padTop(6f).tooltip("[lightgray]Press [accent]S[] key to toggle the planet stats[]").visible(() -> mode != planetLaunch).row();
+             t.add().height(64f); //padding for close button
+             Table starsTable = new Table(Styles.black);
+             pane.setWidget(starsTable);
+diff --git a/core/src/mindustry/ui/dialogs/PlanetStatsDialog.java b/core/src/mindustry/ui/dialogs/PlanetStatsDialog.java
+new file mode 100644
+index 0000000..df1f068
+--- /dev/null
++++ b/core/src/mindustry/ui/dialogs/PlanetStatsDialog.java
+@@ -0,0 +1,184 @@
++package mindustry.ui.dialogs;
++
++import arc.*;
++import arc.flabel.*;
++import arc.input.*;
++import arc.math.*;
++import arc.scene.actions.*;
++import arc.scene.event.*;
++import arc.scene.ui.*;
++import arc.scene.ui.layout.*;
++import arc.util.*;
++import arc.util.Strings;
++import mindustry.game.*;
++import mindustry.gen.*;
++import mindustry.graphics.*;
++import mindustry.type.*;
++import mindustry.ui.*;
++
++import static mindustry.Vars.*;
++
++public class PlanetStatsDialog extends BaseDialog{
++    
++    public PlanetStatsDialog(){
++        super("@planet.stats");
++        
++        // Add keyboard listener for 'S' key to close (same as back button)
++        addListener(new InputListener(){
++            @Override
++            public boolean keyDown(InputEvent event, KeyCode key){
++                if(key == KeyCode.s || key == KeyCode.escape || key == KeyCode.back){
++                    hide();
++                    return true;
++                }
++                return false;
++            }
++        });
++    }
++    
++    public void show(Planet planet){
++        if(planet == null) return;
++        
++        PlanetStats stats = planet.getStats();
++        
++        cont.clear();
++        buttons.clear();
++        
++        cont.table(t -> {
++            t.add(planet.localizedName).center().pad(6).style(Styles.outlineLabel).color(Pal.accent);
++            t.row();
++            
++            t.pane(p -> {
++                p.margin(13f);
++                p.left().defaults().left();
++                p.setBackground(Styles.black3);
++                
++                p.table(statsTable -> {
++                    // Time played
++                    addStatString(statsTable, Core.bundle.get("stats.playtime"), formatTime(stats.timePlayed), 0f);
++                    // Distance walked
++                    addStatString(statsTable, Core.bundle.get("stats.distanceWalked", "Distance Walked"), formatDistance(stats.distanceWalked), 0.05f);
++                    addStat(statsTable, Core.bundle.get("stats.playerDeaths", "Player Deaths"), stats.playerDeaths, 0.1f);
++                    addStat(statsTable, Core.bundle.get("stats.enemiesDestroyed"), stats.enemyUnitsDestroyed, 0.15f);
++                    if(stats.wavesLasted > 0){
++                        addStat(statsTable, Core.bundle.get("stats.wave"), stats.wavesLasted, 0.2f);
++                    }
++                    addStat(statsTable, Core.bundle.get("stats.unitsCreated"), stats.unitsCreated, 0.25f);
++                    addStat(statsTable, Core.bundle.get("stats.built"), stats.buildingsBuilt, 0.3f);
++                    addStat(statsTable, Core.bundle.get("stats.destroyed"), stats.buildingsDestroyed, 0.35f);
++                    addStat(statsTable, Core.bundle.get("stats.deconstructed"), stats.buildingsDeconstructed, 0.4f);
++                }).top().grow().row();
++            }).grow().pad(12).top();
++        }).center().minWidth(370).maxSize(600, 550).grow();
++        
++        buttons.button("@back", Icon.left, this::hide).size(170f, 60f);
++        
++        show();
++    }
++    
++    private void addStat(Table parent, String stat, int value, float delay){
++        parent.add(new StatLabel(stat, value, delay)).top().pad(5).growX().height(50).row();
++    }
++    
++    private void addStatString(Table parent, String stat, String value, float delay){
++        parent.add(new StatLabelString(stat, value, delay)).top().pad(5).growX().height(50).row();
++    }
++    
++    /** Formats time in milliseconds to a readable string. */
++    private String formatTime(long milliseconds){
++        return Strings.formatMillis(milliseconds);
++    }
++    
++    /** Formats distance to a readable string (meters/kilometers). */
++    private String formatDistance(float distance){
++        if(distance >= 1000f){
++            return String.format("%.2f km", distance / 1000f);
++        }else{
++            return String.format("%.1f m", distance);
++        }
++    }
++    
++    private static class StatLabel extends Table {
++        private float progress = 0;
++
++        public StatLabel(String stat, int value, float delay){
++            setTransform(true);
++            setClip(true);
++            setBackground(Tex.whiteui);
++            setColor(Pal.accent);
++            margin(2f);
++
++            FLabel statLabel = new FLabel(stat);
++            statLabel.setStyle(Styles.outlineLabel);
++            statLabel.setWrap(true);
++            statLabel.pause();
++
++            Label valueLabel = new Label("", Styles.outlineLabel);
++            valueLabel.setAlignment(Align.right);
++
++            add(statLabel).left().growX().padLeft(5);
++            add(valueLabel).right().growX().padRight(5);
++
++            actions(
++                Actions.scaleTo(0, 1),
++                Actions.delay(delay),
++                Actions.parallel(
++                    Actions.scaleTo(1, 1, 0.3f, Interp.pow3Out),
++                    Actions.color(Pal.darkestGray, 0.3f, Interp.pow3Out),
++                    Actions.sequence(
++                        Actions.delay(0.3f),
++                        Actions.run(() -> {
++                            valueLabel.update(() -> {
++                                progress = Math.min(1, progress + (Time.delta / 60));
++                                valueLabel.setText("" + (int)Mathf.lerp(0, value, value < 10 ? progress : Interp.slowFast.apply(progress)));
++                            });
++                            statLabel.resume();
++                        })
++                    )
++                )
++            );
++        }
++    }
++    
++    private static class StatLabelString extends Table {
++        private float progress = 0;
++        private final String value;
++
++        public StatLabelString(String stat, String value, float delay){
++            this.value = value;
++            setTransform(true);
++            setClip(true);
++            setBackground(Tex.whiteui);
++            setColor(Pal.accent);
++            margin(2f);
++
++            FLabel statLabel = new FLabel(stat);
++            statLabel.setStyle(Styles.outlineLabel);
++            statLabel.setWrap(true);
++            statLabel.pause();
++
++            Label valueLabel = new Label("", Styles.outlineLabel);
++            valueLabel.setAlignment(Align.right);
++
++            add(statLabel).left().growX().padLeft(5);
++            add(valueLabel).right().growX().padRight(5);
++
++            actions(
++                Actions.scaleTo(0, 1),
++                Actions.delay(delay),
++                Actions.parallel(
++                    Actions.scaleTo(1, 1, 0.3f, Interp.pow3Out),
++                    Actions.color(Pal.darkestGray, 0.3f, Interp.pow3Out),
++                    Actions.sequence(
++                        Actions.delay(0.3f),
++                        Actions.run(() -> {
++                            valueLabel.setText(value);
++                            statLabel.resume();
++                        })
++                    )
++                )
++            );
++        }
++    }
++}
++
